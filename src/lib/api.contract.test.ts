@@ -111,6 +111,18 @@ describe("frontend API contract", () => {
         expect(getRefreshToken()).toBe("fresh-refresh");
     });
 
+    it("clears tokens when refresh fails", async () => {
+        saveAuthTokens("expired-access", "refresh-3");
+
+        fetchMock
+            .mockResolvedValueOnce(jsonResponse({ error: "invalid or expired token" }, { status: 401 }))
+            .mockResolvedValueOnce(jsonResponse({ error: "refresh token expired" }, { status: 401 }));
+
+        await expect(api.getCurrentUser()).rejects.toMatchObject({ status: 401 });
+        expect(getAccessToken()).toBeNull();
+        expect(getRefreshToken()).toBeNull();
+    });
+
     it("maps backend preference payloads into frontend state shape", async () => {
         fetchMock.mockResolvedValueOnce(jsonResponse({
             data: {
