@@ -86,9 +86,12 @@ function buildHeaders(init?: RequestOptions): Headers {
 }
 
 function getFetchOptions(init?: RequestOptions): RequestInit {
-    const { skipAuth: _skipAuth, retryOnAuth: _retryOnAuth, ...rest } = init ?? {};
+    const options: RequestInit = { ...(init ?? {}) };
+    delete (options as RequestOptions).skipAuth;
+    delete (options as RequestOptions).retryOnAuth;
+
     return {
-        ...rest,
+        ...options,
         headers: buildHeaders(init),
     };
 }
