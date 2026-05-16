@@ -4,8 +4,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import type { CreateProviderInput, UpdateProviderPatch } from "@/hooks/useProviders";
-import { API_STYLES_OPTIONS, type APIStyle, type ModelProvider } from "@/types/providers";
+import type { Provider } from "@/hooks/useProvidersApi";
+import { API_STYLES_OPTIONS, type APIStyle } from "@/types/providers";
 import { useEffect, useMemo, useState } from "react";
 import { normalizeAndDedupeModels } from "@/utils/models";
 import { useTranslation } from "react-i18next";
@@ -14,10 +14,10 @@ type Props = {
     open: boolean;
     onOpenChange: (v: boolean) => void;
 
-    initial?: ModelProvider | null;
+    initial?: Provider | null;
 
-    onCreate: (data: CreateProviderInput) => Promise<void>;
-    onUpdate: (id: number, patch: UpdateProviderPatch) => Promise<void>;
+    onCreate: (data: Omit<Provider, "id" | "created_at" | "updated_at">) => Promise<void>;
+    onUpdate: (id: number, patch: Partial<Provider>) => Promise<void>;
 };
 
 export default function ProviderUpsertDialog({

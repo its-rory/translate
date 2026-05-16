@@ -1,7 +1,25 @@
 services:
-  app:
+  translate:
     build: .
-    container_name: poixe-translate
+    container_name: translate
     ports:
       - "8080:80"
+    volumes:
+      - translate_data:/var/opt/translate
+    environment:
+      - ADMIN_USERNAME=admin
+      - ADMIN_PASSWORD=changeme123
+      - JWT_SECRET=${JWT_SECRET:-changeme-jwt-secret-change-in-production}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-changeme-encryption-key-32bytes}
+      - PORT=8080
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:80/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  translate_data:
+    driver: local
