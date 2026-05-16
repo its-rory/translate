@@ -30,8 +30,8 @@ export const useAuth = create<AuthState>((set) => ({
         try {
             await api.logout();
         } catch {}
-        set({ user: null });
-        window.location.href = "/login";
+        set({ user: null, isLoading: false });
+        window.location.href = "/";
     },
 
     fetchCurrentUser: async () => {
