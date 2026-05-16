@@ -56,10 +56,15 @@ func (s *UserService) Create(req model.UserCreateRequest) (*model.UserResponse, 
 		return nil, fmt.Errorf("failed to hash password: %w", err)
 	}
 
+	role := req.Role
+	if role == "" {
+		role = "USER"
+	}
+
 	user := &model.User{
 		Username:     req.Username,
 		PasswordHash: string(hashedPassword),
-		Role:         "USER",
+		Role:         role,
 		DisplayName:  req.DisplayName,
 		Email:        req.Email,
 	}
@@ -81,6 +86,9 @@ func (s *UserService) Update(id int64, req model.UserUpdateRequest) (*model.User
 		return nil, errors.New("user not found")
 	}
 
+	if req.Role != "" {
+		u.Role = req.Role
+	}
 	if req.DisplayName != "" {
 		u.DisplayName = req.DisplayName
 	}
@@ -97,6 +105,23 @@ func (s *UserService) Update(id int64, req model.UserUpdateRequest) (*model.User
 
 	resp := u.ToResponse()
 	return &resp, nil
+}
+
+func (s *UserService) ChangePassword(id int64, password string) error {
+	u, err := s.repo.GetByID(id)
+	if err != nil {
+		return err
+	}
+	if u == nil {
+		return errors.New("user not found")
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("failed to hash password: %w", err)
+	}
+
+	return s.repo.UpdatePassword(id, string(hashedPassword))
 }
 
 func (s *UserService) Delete(id int64) error {
