@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"net/http"
 
@@ -49,9 +50,12 @@ func (h *TranslateHandler) StreamTranslate(c *gin.Context) {
 	writer := bufio.NewWriter(c.Writer)
 	flusher := c.Writer
 
-	err := h.translateService.StreamTranslate(req, writer, flusher)
-	if err != nil {
-		fmt.Fprintf(writer, "data: {\"error\": \"%s\"}\n\n", err.Error())
+	if err := h.translateService.StreamTranslate(req, writer, flusher); err != nil {
+		payload, marshalErr := json.Marshal(gin.H{"error": err.Error()})
+		if marshalErr != nil {
+			payload = []byte(`{"error":"translation stream failed"}`)
+		}
+		fmt.Fprintf(writer, "data: %s\n\n", payload)
 		writer.Flush()
 		flusher.Flush()
 	}
