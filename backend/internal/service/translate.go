@@ -3,15 +3,20 @@ package service
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 
 	"github.com/its-rory/translate/backend/internal/model"
 	"github.com/its-rory/translate/backend/internal/repository"
 )
+
+var upstreamHTTPClient = &http.Client{Timeout: 45 * time.Second}
 
 type TranslateService struct {
 	providerRepo *repository.ProviderRepository
@@ -38,33 +43,19 @@ type TranslateResponse struct {
 	TranslatedText string `json:"translated_text"`
 }
 
+type StreamTranslateRequest struct {
+	ProviderID int64  `json:"provider_id" binding:"required"`
+	ModelName  string `json:"model_name" binding:"required"`
+	PromptID   int64  `json:"prompt_id"`
+	SourceText string `json:"source_text" binding:"required"`
+	TargetLang string `json:"target_lang" binding:"required"`
+	SourceLang string `json:"source_lang"`
+}
+
 func (s *TranslateService) Translate(req TranslateRequest) (*TranslateResponse, error) {
-	provider, err := s.providerRepo.GetByID(req.ProviderID)
+	provider, promptContent, userMessage, err := s.prepareRequest(req.ProviderID, req.ModelName, req.PromptID, req.SourceText, req.TargetLang, req.SourceLang)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get provider: %w", err)
-	}
-	if provider == nil {
-		return nil, fmt.Errorf("provider not found")
-	}
-
-	var promptContent string
-	if req.PromptID > 0 {
-		prompt, err := s.promptRepo.GetByID(req.PromptID)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get prompt: %w", err)
-		}
-		if prompt != nil {
-			promptContent = prompt.Content
-		}
-	}
-
-	if promptContent == "" {
-		promptContent = "Translate the following text to " + req.TargetLang + ". Output only the translated text."
-	}
-
-	userMessage := req.SourceText
-	if req.SourceLang != "" && req.SourceLang != "auto" {
-		userMessage = fmt.Sprintf("[Source language: %s]\n\n%s", req.SourceLang, req.SourceText)
+		return nil, err
 	}
 
 	switch provider.APIStyle {
@@ -81,20 +72,67 @@ func (s *TranslateService) Translate(req TranslateRequest) (*TranslateResponse, 
 	}
 }
 
+func (s *TranslateService) StreamTranslate(req StreamTranslateRequest, writer *bufio.Writer, flusher http.Flusher) error {
+	provider, promptContent, userMessage, err := s.prepareRequest(req.ProviderID, req.ModelName, req.PromptID, req.SourceText, req.TargetLang, req.SourceLang)
+	if err != nil {
+		return err
+	}
+
+	switch provider.APIStyle {
+	case "openai_completions":
+		return s.streamOpenAICompletions(provider, req.ModelName, promptContent, userMessage, writer, flusher)
+	default:
+		return fmt.Errorf("streaming not supported for API style: %s", provider.APIStyle)
+	}
+}
+
+func (s *TranslateService) prepareRequest(providerID int64, modelName string, promptID int64, sourceText, targetLang, sourceLang string) (*model.Provider, string, string, error) {
+	provider, err := s.providerRepo.GetByID(providerID)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("failed to get provider: %w", err)
+	}
+	if provider == nil {
+		return nil, "", "", fmt.Errorf("provider not found")
+	}
+
+	promptContent := buildDefaultPrompt(targetLang)
+	if promptID > 0 {
+		prompt, err := s.promptRepo.GetByID(promptID)
+		if err != nil {
+			return nil, "", "", fmt.Errorf("failed to get prompt: %w", err)
+		}
+		if prompt != nil && prompt.Content != "" {
+			promptContent = prompt.Content
+		}
+	}
+
+	return provider, promptContent, buildUserMessage(sourceText, sourceLang), nil
+}
+
+func buildDefaultPrompt(targetLang string) string {
+	return "Translate the following text to " + targetLang + ". Output only the translated text."
+}
+
+func buildUserMessage(sourceText, sourceLang string) string {
+	if sourceLang != "" && sourceLang != "auto" {
+		return fmt.Sprintf("[Source language: %s]\n\n%s", sourceLang, sourceText)
+	}
+	return sourceText
+}
+
 func (s *TranslateService) translateOpenAICompletions(provider *model.Provider, modelName, systemPrompt, userMessage string) (*TranslateResponse, error) {
-	url := strings.TrimRight(provider.BaseURL, "/") + "/v1/chat/completions"
-	body := map[string]interface{}{
+	result, err := s.doHTTPPost(strings.TrimRight(provider.BaseURL, "/")+"/v1/chat/completions", provider.APIKey, map[string]interface{}{
 		"model": modelName,
 		"messages": []map[string]string{
 			{"role": "system", "content": systemPrompt},
 			{"role": "user", "content": userMessage},
 		},
 		"stream": false,
-	}
-	result, err := s.doHTTPPost(url, provider.APIKey, body)
+	})
 	if err != nil {
 		return nil, err
 	}
+
 	choices, ok := result["choices"].([]interface{})
 	if !ok || len(choices) == 0 {
 		return nil, fmt.Errorf("no choices in response")
@@ -112,107 +150,100 @@ func (s *TranslateService) translateOpenAICompletions(provider *model.Provider, 
 }
 
 func (s *TranslateService) translateOpenAIResponses(provider *model.Provider, modelName, systemPrompt, userMessage string) (*TranslateResponse, error) {
-	url := strings.TrimRight(provider.BaseURL, "/") + "/v1/responses"
-	body := map[string]interface{}{
-		"model":       modelName,
+	result, err := s.doHTTPPost(strings.TrimRight(provider.BaseURL, "/")+"/v1/responses", provider.APIKey, map[string]interface{}{
+		"model":        modelName,
 		"instructions": systemPrompt,
-		"input":       userMessage,
-		"stream":      false,
-	}
-	result, err := s.doHTTPPost(url, provider.APIKey, body)
+		"input":        userMessage,
+		"stream":       false,
+	})
 	if err != nil {
 		return nil, err
 	}
+
 	output, ok := result["output"].([]interface{})
 	if !ok || len(output) == 0 {
 		return nil, fmt.Errorf("no output in response")
 	}
 	for _, item := range output {
-		if m, ok := item.(map[string]interface{}); ok {
-			if m["type"] == "message" {
-				if content, ok := m["content"].([]interface{}); ok && len(content) > 0 {
-					if textPart, ok := content[0].(map[string]interface{}); ok {
-						if text, ok := textPart["text"].(string); ok {
-							return &TranslateResponse{TranslatedText: text}, nil
-						}
-					}
-				}
-			}
+		message, ok := item.(map[string]interface{})
+		if !ok || message["type"] != "message" {
+			continue
+		}
+		content, ok := message["content"].([]interface{})
+		if !ok || len(content) == 0 {
+			continue
+		}
+		textPart, ok := content[0].(map[string]interface{})
+		if !ok {
+			continue
+		}
+		text, _ := textPart["text"].(string)
+		if text != "" {
+			return &TranslateResponse{TranslatedText: text}, nil
 		}
 	}
+
 	return nil, fmt.Errorf("no text content in response")
 }
 
 func (s *TranslateService) translateAnthropicMessages(provider *model.Provider, modelName, systemPrompt, userMessage string) (*TranslateResponse, error) {
-	url := strings.TrimRight(provider.BaseURL, "/") + "/v1/messages"
-	body := map[string]interface{}{
+	requestBody, err := json.Marshal(map[string]interface{}{
 		"model":      modelName,
 		"max_tokens": 4096,
 		"system":     systemPrompt,
 		"messages": []map[string]string{
 			{"role": "user", "content": userMessage},
 		},
-	}
-	reqBody, err := json.Marshal(body)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
-	httpReq, err := http.NewRequest("POST", url, bytes.NewReader(reqBody))
+
+	httpReq, err := http.NewRequestWithContext(context.Background(), http.MethodPost, strings.TrimRight(provider.BaseURL, "/")+"/v1/messages", bytes.NewReader(requestBody))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("x-api-key", provider.APIKey)
 	httpReq.Header.Set("anthropic-version", "2023-06-01")
-	resp, err := http.DefaultClient.Do(httpReq)
+
+	result, err := s.doHTTPRequest(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
+		return nil, err
 	}
-	defer resp.Body.Close()
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(respBody))
-	}
-	var result map[string]interface{}
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
+
 	content, ok := result["content"].([]interface{})
 	if !ok || len(content) == 0 {
 		return nil, fmt.Errorf("no content in response")
 	}
-	if textBlock, ok := content[0].(map[string]interface{}); ok {
-		if text, ok := textBlock["text"].(string); ok {
-			return &TranslateResponse{TranslatedText: text}, nil
-		}
+	textBlock, ok := content[0].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid content format")
 	}
-	return nil, fmt.Errorf("no text content in response")
+	text, _ := textBlock["text"].(string)
+	if text == "" {
+		return nil, fmt.Errorf("no text content in response")
+	}
+	return &TranslateResponse{TranslatedText: text}, nil
 }
 
 func (s *TranslateService) translateGeminiContent(provider *model.Provider, modelName, systemPrompt, userMessage string) (*TranslateResponse, error) {
-	url := fmt.Sprintf("%s/v1beta/models/%s:generateContent?key=%s",
-		strings.TrimRight(provider.BaseURL, "/"), modelName, provider.APIKey)
-	body := map[string]interface{}{
+	query := url.Values{}
+	query.Set("key", provider.APIKey)
+	endpoint := fmt.Sprintf("%s/v1beta/models/%s:generateContent?%s", strings.TrimRight(provider.BaseURL, "/"), url.PathEscape(modelName), query.Encode())
+
+	result, err := s.doHTTPPostNoAuth(endpoint, map[string]interface{}{
 		"system_instruction": map[string]interface{}{
-			"parts": []map[string]string{
-				{"text": systemPrompt},
-			},
+			"parts": []map[string]string{{"text": systemPrompt}},
 		},
 		"contents": []map[string]interface{}{
-			{
-				"parts": []map[string]string{
-					{"text": userMessage},
-				},
-			},
+			{"parts": []map[string]string{{"text": userMessage}}},
 		},
-	}
-	result, err := s.doHTTPPostNoAuth(url, body)
+	})
 	if err != nil {
 		return nil, err
 	}
+
 	candidates, ok := result["candidates"].([]interface{})
 	if !ok || len(candidates) == 0 {
 		return nil, fmt.Errorf("no candidates in response")
@@ -229,147 +260,73 @@ func (s *TranslateService) translateGeminiContent(provider *model.Provider, mode
 	if !ok || len(parts) == 0 {
 		return nil, fmt.Errorf("no parts in content")
 	}
-	if part, ok := parts[0].(map[string]interface{}); ok {
-		if text, ok := part["text"].(string); ok {
-			return &TranslateResponse{TranslatedText: text}, nil
-		}
+	part, ok := parts[0].(map[string]interface{})
+	if !ok {
+		return nil, fmt.Errorf("invalid part format")
 	}
-	return nil, fmt.Errorf("no text content in response")
-}
-
-func (s *TranslateService) doHTTPPost(url, apiKey string, body interface{}) (map[string]interface{}, error) {
-	reqBody, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	text, _ := part["text"].(string)
+	if text == "" {
+		return nil, fmt.Errorf("no text content in response")
 	}
-	httpReq, err := http.NewRequest("POST", url, bytes.NewReader(reqBody))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
-	return s.doHTTPRequest(httpReq)
-}
-
-func (s *TranslateService) doHTTPPostNoAuth(url string, body interface{}) (map[string]interface{}, error) {
-	reqBody, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
-	}
-	httpReq, err := http.NewRequest("POST", url, bytes.NewReader(reqBody))
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	return s.doHTTPRequest(httpReq)
-}
-
-func (s *TranslateService) doHTTPRequest(httpReq *http.Request) (map[string]interface{}, error) {
-	resp, err := http.DefaultClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request: %w", err)
-	}
-	defer resp.Body.Close()
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API error (status %d): %s", resp.StatusCode, string(respBody))
-	}
-	var result map[string]interface{}
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("failed to parse response: %w", err)
-	}
-	return result, nil
-}
-
-type StreamTranslateRequest struct {
-	ProviderID int64  `json:"provider_id" binding:"required"`
-	ModelName  string `json:"model_name" binding:"required"`
-	PromptID   int64  `json:"prompt_id"`
-	SourceText string `json:"source_text" binding:"required"`
-	TargetLang string `json:"target_lang" binding:"required"`
-	SourceLang string `json:"source_lang"`
-}
-
-func (s *TranslateService) StreamTranslate(req StreamTranslateRequest, writer *bufio.Writer, flusher http.Flusher) error {
-	provider, err := s.providerRepo.GetByID(req.ProviderID)
-	if err != nil {
-		return fmt.Errorf("failed to get provider: %w", err)
-	}
-	if provider == nil {
-		return fmt.Errorf("provider not found")
-	}
-
-	var promptContent string
-	if req.PromptID > 0 {
-		prompt, err := s.promptRepo.GetByID(req.PromptID)
-		if err != nil {
-			return fmt.Errorf("failed to get prompt: %w", err)
-		}
-		if prompt != nil {
-			promptContent = prompt.Content
-		}
-	}
-	if promptContent == "" {
-		promptContent = "Translate the following text to " + req.TargetLang + ". Output only the translated text."
-	}
-	userMessage := req.SourceText
-	if req.SourceLang != "" && req.SourceLang != "auto" {
-		userMessage = fmt.Sprintf("[Source language: %s]\n\n%s", req.SourceLang, req.SourceText)
-	}
-
-	switch provider.APIStyle {
-	case "openai_completions":
-		return s.streamOpenAICompletions(provider, req.ModelName, promptContent, userMessage, writer, flusher)
-	default:
-		return fmt.Errorf("streaming not supported for API style: %s", provider.APIStyle)
-	}
+	return &TranslateResponse{TranslatedText: text}, nil
 }
 
 func (s *TranslateService) streamOpenAICompletions(provider *model.Provider, modelName, systemPrompt, userMessage string, writer *bufio.Writer, flusher http.Flusher) error {
-	url := strings.TrimRight(provider.BaseURL, "/") + "/v1/chat/completions"
-	body := map[string]interface{}{
+	requestBody, err := json.Marshal(map[string]interface{}{
 		"model": modelName,
 		"messages": []map[string]string{
 			{"role": "system", "content": systemPrompt},
 			{"role": "user", "content": userMessage},
 		},
 		"stream": true,
-	}
-	reqBody, err := json.Marshal(body)
+	})
 	if err != nil {
 		return fmt.Errorf("failed to marshal request: %w", err)
 	}
-	httpReq, err := http.NewRequest("POST", url, bytes.NewReader(reqBody))
+
+	httpReq, err := http.NewRequestWithContext(context.Background(), http.MethodPost, strings.TrimRight(provider.BaseURL, "/")+"/v1/chat/completions", bytes.NewReader(requestBody))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+provider.APIKey)
-	resp, err := http.DefaultClient.Do(httpReq)
+
+	resp, err := upstreamHTTPClient.Do(httpReq)
 	if err != nil {
 		return fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return fmt.Errorf("upstream API request failed with status %d", resp.StatusCode)
+		}
+		return sanitizeUpstreamError(resp.StatusCode, respBody)
+	}
+
 	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+
 	for scanner.Scan() {
 		line := scanner.Text()
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}
+
 		data := strings.TrimPrefix(line, "data: ")
 		if data == "[DONE]" {
-			fmt.Fprintf(writer, "data: [DONE]\n\n")
+			fmt.Fprint(writer, "data: [DONE]\n\n")
 			writer.Flush()
 			flusher.Flush()
 			break
 		}
+
 		var chunk map[string]interface{}
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			continue
 		}
+
 		choices, ok := chunk["choices"].([]interface{})
 		if !ok || len(choices) == 0 {
 			continue
@@ -383,10 +340,85 @@ func (s *TranslateService) streamOpenAICompletions(provider *model.Provider, mod
 			continue
 		}
 		content, _ := delta["content"].(string)
+		if content == "" {
+			continue
+		}
+
 		sseData, _ := json.Marshal(map[string]string{"content": content})
 		fmt.Fprintf(writer, "data: %s\n\n", sseData)
 		writer.Flush()
 		flusher.Flush()
 	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("failed to read upstream stream: %w", err)
+	}
+
 	return nil
+}
+
+func (s *TranslateService) doHTTPPost(endpoint, apiKey string, body interface{}) (map[string]interface{}, error) {
+	requestBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(context.Background(), http.MethodPost, endpoint, bytes.NewReader(requestBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+apiKey)
+
+	return s.doHTTPRequest(httpReq)
+}
+
+func (s *TranslateService) doHTTPPostNoAuth(endpoint string, body interface{}) (map[string]interface{}, error) {
+	requestBody, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(context.Background(), http.MethodPost, endpoint, bytes.NewReader(requestBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	return s.doHTTPRequest(httpReq)
+}
+
+func (s *TranslateService) doHTTPRequest(httpReq *http.Request) (map[string]interface{}, error) {
+	resp, err := upstreamHTTPClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, sanitizeUpstreamError(resp.StatusCode, respBody)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+	return result, nil
+}
+
+func sanitizeUpstreamError(statusCode int, _ []byte) error {
+	switch statusCode {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return fmt.Errorf("upstream API authentication failed")
+	case http.StatusTooManyRequests:
+		return fmt.Errorf("upstream API rate limit exceeded")
+	case http.StatusBadGateway, http.StatusGatewayTimeout, http.StatusRequestTimeout:
+		return fmt.Errorf("upstream API timed out")
+	default:
+		return fmt.Errorf("upstream API request failed with status %d", statusCode)
+	}
 }
