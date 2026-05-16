@@ -1,4 +1,4 @@
-const BASE_URL = "/api";
+const BASE_URL = "/api/v1";
 
 type TranslateParams = {
     source_text: string;
@@ -17,19 +17,92 @@ type SSEStream = {
     abort: () => void;
 };
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-    const res = await fetch(`${BASE_URL}${path}`, {
-        headers: { "Content-Type": "application/json" },
-        ...init,
-    });
-    if (!res.ok) {
-        const body = await res.text().catch(() => "");
-        throw { message: `Request failed: ${res.status}`, status: res.status, body };
-    }
-    return res.json();
+type ProviderPayload = {
+    id: number;
+    name: string;
+    base_url: string;
+    api_key: string;
+    api_style: string;
+    models: string;
+    created_at: number;
+    updated_at: number;
+};
+
+type PromptPayload = {
+    id: number;
+    name: string;
+    content: string;
+    is_system: boolean;
+    created_at: number;
+    updated_at: number;
+};
+
+type UserPayload = {
+    id: number;
+    username: string;
+    role: "ADMIN" | "USER";
+    display_name: string;
+    email: string;
+    created_at: number;
+};
+
+type ApiEnvelope<T> = T | { data: T };
+
+function getAccessToken(): string | null {
+    if (typeof window === "undefined") return null;
+    return window.localStorage.getItem("access_token");
 }
 
-function createSSEStream(url: string, body: unknown): SSEStream {
+function buildHeaders(init?: RequestInit): Headers {
+    const headers = new Headers(init?.headers);
+    if (init?.body !== undefined && !headers.has("Content-Type")) {
+        headers.set("Content-Type", "application/json");
+    }
+
+    const token = getAccessToken();
+    if (token && !headers.has("Authorization")) {
+        headers.set("Authorization", `Bearer ${token}`);
+    }
+
+    return headers;
+}
+
+async function parseJsonSafely<T>(res: Response): Promise<T | undefined> {
+    if (res.status === 204) return undefined;
+
+    const text = await res.text().catch(() => "");
+    if (!text) return undefined;
+
+    return JSON.parse(text) as T;
+}
+
+function unwrapData<T>(payload: ApiEnvelope<T> | undefined): T {
+    if (payload && typeof payload === "object" && "data" in payload) {
+        return payload.data;
+    }
+    return payload as T;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+    const res = await fetch(`${BASE_URL}${path}`, {
+        ...init,
+        headers: buildHeaders(init),
+    });
+
+    const payload = await parseJsonSafely<unknown>(res);
+    if (!res.ok) {
+        const errorPayload = payload as { error?: string } | undefined;
+        throw {
+            message: errorPayload?.error ?? `Request failed: ${res.status}`,
+            status: res.status,
+            body: payload,
+        };
+    }
+
+    return payload as T;
+}
+
+function createSSEStream(path: string, body: unknown): SSEStream {
     const controller = new AbortController();
     let deltaHandler: ((delta: string) => void) | null = null;
     let errorHandler: ((error: string) => void) | null = null;
@@ -37,16 +110,16 @@ function createSSEStream(url: string, body: unknown): SSEStream {
 
     (async () => {
         try {
-            const res = await fetch(url, {
+            const res = await fetch(`${BASE_URL}${path}`, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: buildHeaders({ body: JSON.stringify(body) }),
                 body: JSON.stringify(body),
                 signal: controller.signal,
             });
 
             if (!res.ok) {
-                const text = await res.text().catch(() => "");
-                errorHandler?.(text || `HTTP ${res.status}`);
+                const payload = await parseJsonSafely<{ error?: string }>(res);
+                errorHandler?.(payload?.error ?? `HTTP ${res.status}`);
                 completeHandler?.();
                 return;
             }
@@ -70,16 +143,21 @@ function createSSEStream(url: string, body: unknown): SSEStream {
                 buffer = lines.pop() || "";
 
                 for (const line of lines) {
-                    if (line.startsWith("data: ")) {
-                        const data = line.slice(6);
-                        if (data === "[DONE]") continue;
-                        try {
-                            const parsed = JSON.parse(data);
-                            const delta = parsed.delta ?? parsed.content ?? parsed.text ?? "";
-                            if (delta) deltaHandler?.(delta);
-                        } catch {
-                            if (data.trim()) deltaHandler?.(data);
+                    if (!line.startsWith("data: ")) continue;
+
+                    const data = line.slice(6);
+                    if (data === "[DONE]") continue;
+
+                    try {
+                        const parsed = JSON.parse(data) as { error?: string; delta?: string; content?: string; text?: string };
+                        if (parsed.error) {
+                            errorHandler?.(parsed.error);
+                            continue;
                         }
+                        const delta = parsed.delta ?? parsed.content ?? parsed.text ?? "";
+                        if (delta) deltaHandler?.(delta);
+                    } catch {
+                        if (data.trim()) deltaHandler?.(data);
                     }
                 }
             }
@@ -114,60 +192,110 @@ function wrap(ctrl: AbortController, h: { deltaHandler: ((delta: string) => void
 
 export const api = {
     translate(params: TranslateParams): SSEStream {
-        return createSSEStream(`${BASE_URL}/translate`, params);
+        return createSSEStream("/translate/stream", {
+            provider_id: params.provider_id,
+            model_name: params.model,
+            prompt_id: params.prompt_id,
+            source_text: params.source_text,
+            target_lang: params.target_language,
+            source_lang: params.source_language,
+        });
     },
 
-    listProviders: () =>
-        request<{ providers: Array<{ id: number; name: string; base_url: string; api_key: string; api_style: string; models: string; created_at: number; updated_at: number }> }>("/providers"),
+    async listProviders() {
+        const providers = unwrapData<ProviderPayload[]>(await request<ApiEnvelope<ProviderPayload[]>>("/providers"));
+        return { providers };
+    },
 
     createProvider: (input: { name: string; base_url: string; api_key: string; api_style: string; models: string }) =>
-        request<{ id: number }>("/providers", { method: "POST", body: JSON.stringify(input) }),
+        request("/providers", { method: "POST", body: JSON.stringify(input) }),
 
     updateProvider: (id: number, patch: Record<string, unknown>) =>
-        request<void>(`/providers/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+        request(`/providers/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
 
     deleteProvider: (id: number) =>
-        request<void>(`/providers/${id}`, { method: "DELETE" }),
+        request(`/providers/${id}`, { method: "DELETE" }),
 
-    listPrompts: () =>
-        request<{ prompts: Array<{ id: number; name: string; content: string; is_system: boolean; created_at: number; updated_at: number }> }>("/prompts"),
+    async listPrompts() {
+        const prompts = unwrapData<PromptPayload[]>(await request<ApiEnvelope<PromptPayload[]>>("/prompts"));
+        return { prompts };
+    },
 
     createPrompt: (input: { name: string; content: string }) =>
-        request<{ id: number }>("/prompts", { method: "POST", body: JSON.stringify(input) }),
+        request("/prompts", { method: "POST", body: JSON.stringify(input) }),
 
     updatePrompt: (id: number, patch: Record<string, unknown>) =>
-        request<void>(`/prompts/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+        request(`/prompts/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
 
     deletePrompt: (id: number) =>
-        request<void>(`/prompts/${id}`, { method: "DELETE" }),
+        request(`/prompts/${id}`, { method: "DELETE" }),
 
-    listModels: () =>
-        request<{ providers: Array<{ id: number; name: string; models: string[] }> }>("/models"),
+    listModels: (providerId: number) =>
+        request<ApiEnvelope<string[]>>(`/providers/${providerId}/models`),
 
-    getPreferences: () =>
-        request<Record<string, unknown>>("/preferences"),
+    async getPreferences() {
+        const payload = unwrapData<Record<string, unknown>>(await request<ApiEnvelope<Record<string, unknown>>>("/preferences"));
+        const providerId = payload.selected_model_provider_id;
+        const modelName = payload.selected_model_name;
 
-    updatePreferences: (data: Record<string, unknown>) =>
-        request<void>("/preferences", { method: "PUT", body: JSON.stringify(data) }),
+        return {
+            selectedModel: typeof providerId === "number" && typeof modelName === "string"
+                ? { providerId, model: modelName }
+                : null,
+            translationMode: typeof payload.translation_mode === "string" ? payload.translation_mode : "manual",
+            sourceLanguage: typeof payload.source_language === "string" ? payload.source_language : "auto",
+            targetLanguage: typeof payload.target_language === "string" ? payload.target_language : "",
+            selectedPromptId: typeof payload.selected_prompt_id === "number" ? payload.selected_prompt_id : null,
+            theme: typeof payload.theme === "string" ? payload.theme : "system",
+            locale: typeof payload.locale === "string" ? payload.locale : "en",
+        };
+    },
 
-    getCurrentUser: () =>
-        request<{ user: { id: number; username: string; role: "ADMIN" | "USER"; display_name: string; email: string; created_at: number } }>("/auth/me"),
+    updatePreferences: (data: Record<string, unknown>) => {
+        const selectedModel = (data.selectedModel ?? null) as { providerId: number; model: string } | null;
+        const payload = {
+            translation_mode: data.translationMode ?? "manual",
+            source_language: data.sourceLanguage ?? "auto",
+            target_language: data.targetLanguage ?? "",
+            selected_model_provider_id: selectedModel?.providerId ?? null,
+            selected_model_name: selectedModel?.model ?? "",
+            selected_prompt_id: data.selectedPromptId ?? null,
+            theme: data.theme ?? "system",
+            locale: data.locale ?? "en",
+        };
+        return request("/preferences", { method: "PUT", body: JSON.stringify(payload) });
+    },
+
+    async getCurrentUser() {
+        const payload = await request<{ user?: UserPayload; user_id?: number; username?: string; role?: "ADMIN" | "USER" }>("/auth/me");
+        const user = payload.user ?? {
+            id: payload.user_id ?? 0,
+            username: payload.username ?? "",
+            role: payload.role ?? "USER",
+            display_name: "",
+            email: "",
+            created_at: 0,
+        };
+        return { user };
+    },
 
     logout: () =>
-        request<void>("/auth/logout", { method: "POST" }),
+        request("/auth/logout", { method: "POST", body: JSON.stringify({}) }),
 
-    listUsers: () =>
-        request<{ users: Array<{ id: number; username: string; role: "ADMIN" | "USER"; display_name: string; email: string; created_at: number }> }>("/users"),
+    async listUsers() {
+        const users = unwrapData<UserPayload[]>(await request<ApiEnvelope<UserPayload[]>>("/users"));
+        return { users };
+    },
 
     createUser: (input: { username: string; password: string; role: "ADMIN" | "USER"; display_name: string; email: string }) =>
-        request<{ id: number }>("/users", { method: "POST", body: JSON.stringify(input) }),
+        request("/users", { method: "POST", body: JSON.stringify(input) }),
 
     updateUser: (id: number, patch: { role?: "ADMIN" | "USER"; display_name?: string; email?: string }) =>
-        request<void>(`/users/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
+        request(`/users/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
 
     changeUserPassword: (id: number, password: string) =>
-        request<void>(`/users/${id}/password`, { method: "PUT", body: JSON.stringify({ password }) }),
+        request(`/users/${id}/password`, { method: "PUT", body: JSON.stringify({ password }) }),
 
     deleteUser: (id: number) =>
-        request<void>(`/users/${id}`, { method: "DELETE" }),
+        request(`/users/${id}`, { method: "DELETE" }),
 };
