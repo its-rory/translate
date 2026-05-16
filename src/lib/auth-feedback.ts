@@ -22,6 +22,10 @@ export function setAuthReason(reason: string) {
     getSessionStorage()?.setItem(AUTH_REASON_KEY, reason);
 }
 
+export function peekAuthReason(): string | null {
+    return getSessionStorage()?.getItem(AUTH_REASON_KEY) ?? null;
+}
+
 export function consumeAuthReason(): string | null {
     const storage = getSessionStorage();
     if (!storage) return null;
