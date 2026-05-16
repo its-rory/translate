@@ -216,15 +216,15 @@ function createSSEStream(path: string, body: unknown): SSEStream {
 
             if (!res.ok) {
                 const payload = await parseJsonSafely<{ error?: string }>(res);
-                errorHandler?.(payload?.error ?? `HTTP ${res.status}`);
-                completeHandler?.();
+                (errorHandler as ErrorHandler | null)?.(payload?.error ?? `HTTP ${res.status}`);
+                (completeHandler as CompleteHandler | null)?.();
                 return;
             }
 
             const reader = res.body?.getReader();
             if (!reader) {
-                errorHandler?.("No response body");
-                completeHandler?.();
+                (errorHandler as ErrorHandler | null)?.("No response body");
+                (completeHandler as CompleteHandler | null)?.();
                 return;
             }
 
@@ -248,31 +248,31 @@ function createSSEStream(path: string, body: unknown): SSEStream {
                     try {
                         const parsed = JSON.parse(data) as { error?: string; delta?: string; content?: string; text?: string };
                         if (parsed.error) {
-                            errorHandler?.(parsed.error);
+                            (errorHandler as ErrorHandler | null)?.(parsed.error);
                             continue;
                         }
 
                         const delta = parsed.delta ?? parsed.content ?? parsed.text ?? "";
                         if (delta) {
-                            deltaHandler?.(delta);
+                            (deltaHandler as DeltaHandler | null)?.(delta);
                         }
                     } catch {
                         if (data.trim()) {
-                            deltaHandler?.(data);
+                            (deltaHandler as DeltaHandler | null)?.(data);
                         }
                     }
                 }
             }
 
-            completeHandler?.();
+            (completeHandler as CompleteHandler | null)?.();
         } catch (err: unknown) {
             if (err instanceof DOMException && err.name === "AbortError") {
-                completeHandler?.();
+                (completeHandler as CompleteHandler | null)?.();
                 return;
             }
 
-            errorHandler?.(err instanceof Error ? err.message : String(err));
-            completeHandler?.();
+            (errorHandler as ErrorHandler | null)?.(err instanceof Error ? err.message : String(err));
+            (completeHandler as CompleteHandler | null)?.();
         }
     })();
 
