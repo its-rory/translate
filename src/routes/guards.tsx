@@ -1,6 +1,7 @@
 import { Navigate, Outlet, useLocation } from "react-router-dom";
 
 import { Spinner } from "@/components/ui/spinner";
+import { hasStoredAuthTokens } from "@/lib/auth-session";
 import { useAuth } from "@/stores/auth.store";
 
 function FullPageSpinner() {
@@ -23,7 +24,16 @@ export function RequireAuth() {
     }
 
     if (!user) {
-        return <Navigate to="/login" replace state={{ from: location }} />;
+        return (
+            <Navigate
+                to="/login"
+                replace
+                state={{
+                    from: location,
+                    reason: hasStoredAuthTokens() ? "session_expired" : "auth_required",
+                }}
+            />
+        );
     }
 
     return <Outlet />;
