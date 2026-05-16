@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 import { api } from "@/lib/api";
+import { consumeAuthReason, queueSessionNotice, setAuthReason } from "@/lib/auth-feedback";
 import { clearAuthTokens, hasStoredAuthTokens } from "@/lib/auth-session";
 
 export type UserRole = "ADMIN" | "USER";
@@ -34,6 +35,8 @@ export const useAuth = create<AuthState>((set) => ({
         try {
             await api.login({ username, password });
             const data = await api.getCurrentUser();
+            consumeAuthReason();
+            queueSessionNotice("Signed in successfully. Access tokens refresh automatically, and the refresh session stays valid for up to 7 days unless you sign out.");
             set({ user: data.user, isLoading: false });
         } catch (error) {
             clearAuthTokens();
@@ -64,6 +67,7 @@ export const useAuth = create<AuthState>((set) => ({
             const data = await api.getCurrentUser();
             set({ user: data.user, isLoading: false });
         } catch {
+            setAuthReason("session_expired");
             clearAuthTokens();
             set({ user: null, isLoading: false });
         }
