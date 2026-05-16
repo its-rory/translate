@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
+
 import { api } from "@/lib/api";
+import type { APIStyle } from "@/types/providers";
 
 export type Provider = {
     id: number;
     name: string;
     base_url: string;
     api_key: string;
-    api_style: string;
+    api_style: APIStyle;
     models: string;
     created_at: number;
     updated_at: number;
@@ -26,7 +28,9 @@ export function useProvidersApi() {
         }
     }, []);
 
-    useEffect(() => { fetchProviders(); }, [fetchProviders]);
+    useEffect(() => {
+        fetchProviders();
+    }, [fetchProviders]);
 
     const create = useCallback(async (input: Omit<Provider, "id" | "created_at" | "updated_at">) => {
         await api.createProvider(input);
