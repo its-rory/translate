@@ -1,3 +1,5 @@
+import { clearAuthTokens, getAccessToken, getRefreshToken, saveAuthTokens } from "@/lib/auth-session";
+
 const BASE_URL = "/api/v1";
 
 type TranslateParams = {
@@ -8,6 +10,18 @@ type TranslateParams = {
     provider_id: number;
     model: string;
     prompt_id: number;
+};
+
+type LoginParams = {
+    username: string;
+    password: string;
+};
+
+type TokenPayload = {
+    access_token: string;
+    refresh_token: string;
+    expires_in: number;
+    token_type: string;
 };
 
 type SSEStream = {
@@ -48,23 +62,35 @@ type UserPayload = {
 
 type ApiEnvelope<T> = T | { data: T };
 
-function getAccessToken(): string | null {
-    if (typeof window === "undefined") return null;
-    return window.localStorage.getItem("access_token");
-}
+type RequestOptions = RequestInit & {
+    skipAuth?: boolean;
+    retryOnAuth?: boolean;
+};
 
-function buildHeaders(init?: RequestInit): Headers {
+let refreshPromise: Promise<boolean> | null = null;
+
+function buildHeaders(init?: RequestOptions): Headers {
     const headers = new Headers(init?.headers);
     if (init?.body !== undefined && !headers.has("Content-Type")) {
         headers.set("Content-Type", "application/json");
     }
 
-    const token = getAccessToken();
-    if (token && !headers.has("Authorization")) {
-        headers.set("Authorization", `Bearer ${token}`);
+    if (!init?.skipAuth) {
+        const token = getAccessToken();
+        if (token && !headers.has("Authorization")) {
+            headers.set("Authorization", `Bearer ${token}`);
+        }
     }
 
     return headers;
+}
+
+function getFetchOptions(init?: RequestOptions): RequestInit {
+    const { skipAuth: _skipAuth, retryOnAuth: _retryOnAuth, ...rest } = init ?? {};
+    return {
+        ...rest,
+        headers: buildHeaders(init),
+    };
 }
 
 async function parseJsonSafely<T>(res: Response): Promise<T | undefined> {
@@ -73,7 +99,11 @@ async function parseJsonSafely<T>(res: Response): Promise<T | undefined> {
     const text = await res.text().catch(() => "");
     if (!text) return undefined;
 
-    return JSON.parse(text) as T;
+    try {
+        return JSON.parse(text) as T;
+    } catch {
+        return undefined;
+    }
 }
 
 function unwrapData<T>(payload: ApiEnvelope<T> | undefined): T {
@@ -83,12 +113,54 @@ function unwrapData<T>(payload: ApiEnvelope<T> | undefined): T {
     return payload as T;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-    const res = await fetch(`${BASE_URL}${path}`, {
-        ...init,
-        headers: buildHeaders(init),
-    });
+async function refreshAccessToken(): Promise<boolean> {
+    const refreshToken = getRefreshToken();
+    if (!refreshToken) {
+        clearAuthTokens();
+        return false;
+    }
 
+    if (!refreshPromise) {
+        refreshPromise = (async () => {
+            const res = await fetch(`${BASE_URL}/auth/refresh`, getFetchOptions({
+                method: "POST",
+                body: JSON.stringify({ refresh_token: refreshToken }),
+                skipAuth: true,
+                retryOnAuth: false,
+            }));
+
+            const payload = await parseJsonSafely<TokenPayload | { error?: string }>(res);
+            if (!res.ok || !payload || !("access_token" in payload) || !("refresh_token" in payload)) {
+                clearAuthTokens();
+                return false;
+            }
+
+            saveAuthTokens(payload.access_token, payload.refresh_token);
+            return true;
+        })().finally(() => {
+            refreshPromise = null;
+        });
+    }
+
+    return refreshPromise;
+}
+
+async function performRequest(path: string, init?: RequestOptions): Promise<Response> {
+    const retryOnAuth = init?.retryOnAuth ?? !init?.skipAuth;
+    let res = await fetch(`${BASE_URL}${path}`, getFetchOptions(init));
+
+    if (res.status === 401 && retryOnAuth) {
+        const refreshed = await refreshAccessToken();
+        if (refreshed) {
+            res = await fetch(`${BASE_URL}${path}`, getFetchOptions({ ...init, retryOnAuth: false }));
+        }
+    }
+
+    return res;
+}
+
+async function request<T>(path: string, init?: RequestOptions): Promise<T> {
+    const res = await performRequest(path, init);
     const payload = await parseJsonSafely<unknown>(res);
     if (!res.ok) {
         const errorPayload = payload as { error?: string } | undefined;
@@ -104,16 +176,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 function createSSEStream(path: string, body: unknown): SSEStream {
     const controller = new AbortController();
+    const serializedBody = JSON.stringify(body);
     let deltaHandler: ((delta: string) => void) | null = null;
     let errorHandler: ((error: string) => void) | null = null;
     let completeHandler: (() => void) | null = null;
 
     (async () => {
         try {
-            const res = await fetch(`${BASE_URL}${path}`, {
+            const res = await performRequest(path, {
                 method: "POST",
-                headers: buildHeaders({ body: JSON.stringify(body) }),
-                body: JSON.stringify(body),
+                body: serializedBody,
                 signal: controller.signal,
             });
 
@@ -191,6 +263,25 @@ function wrap(ctrl: AbortController, h: { deltaHandler: ((delta: string) => void
 }
 
 export const api = {
+    async login(credentials: LoginParams) {
+        const payload = await request<TokenPayload>("/auth/login", {
+            method: "POST",
+            body: JSON.stringify(credentials),
+            skipAuth: true,
+            retryOnAuth: false,
+        });
+        saveAuthTokens(payload.access_token, payload.refresh_token);
+        return payload;
+    },
+
+    logout: () =>
+        request("/auth/logout", {
+            method: "POST",
+            body: JSON.stringify({ refresh_token: getRefreshToken() }),
+            skipAuth: true,
+            retryOnAuth: false,
+        }),
+
     translate(params: TranslateParams): SSEStream {
         return createSSEStream("/translate/stream", {
             provider_id: params.provider_id,
@@ -230,8 +321,9 @@ export const api = {
     deletePrompt: (id: number) =>
         request(`/prompts/${id}`, { method: "DELETE" }),
 
-    listModels: (providerId: number) =>
-        request<ApiEnvelope<string[]>>(`/providers/${providerId}/models`),
+    async listModels(providerId: number) {
+        return unwrapData<string[]>(await request<ApiEnvelope<string[]>>(`/providers/${providerId}/models`));
+    },
 
     async getPreferences() {
         const payload = unwrapData<Record<string, unknown>>(await request<ApiEnvelope<Record<string, unknown>>>("/preferences"));
@@ -278,9 +370,6 @@ export const api = {
         };
         return { user };
     },
-
-    logout: () =>
-        request("/auth/logout", { method: "POST", body: JSON.stringify({}) }),
 
     async listUsers() {
         const users = unwrapData<UserPayload[]>(await request<ApiEnvelope<UserPayload[]>>("/users"));
