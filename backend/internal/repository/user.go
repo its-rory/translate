@@ -77,13 +77,24 @@ func (r *UserRepository) Create(u *model.User) error {
 func (r *UserRepository) Update(u *model.User) error {
 	now := model.NowUnix()
 	_, err := database.DB.Exec(
-		"UPDATE users SET display_name = ?, email = ?, avatar_url = ?, updated_at = ? WHERE id = ?",
-		u.DisplayName, u.Email, u.AvatarURL, now, u.ID,
+		"UPDATE users SET role = ?, display_name = ?, email = ?, avatar_url = ?, updated_at = ? WHERE id = ?",
+		u.Role, u.DisplayName, u.Email, u.AvatarURL, now, u.ID,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to update user: %w", err)
 	}
 	u.UpdatedAt = now
+	return nil
+}
+
+func (r *UserRepository) UpdatePassword(id int64, passwordHash string) error {
+	_, err := database.DB.Exec(
+		"UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?",
+		passwordHash, model.NowUnix(), id,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update user password: %w", err)
+	}
 	return nil
 }
 
