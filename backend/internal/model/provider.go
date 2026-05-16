@@ -47,7 +47,7 @@ func (p *Provider) ToResponse() ProviderResponse {
 		ID:        p.ID,
 		Name:      p.Name,
 		BaseURL:   p.BaseURL,
-		APIKey:    p.APIKey,
+		APIKey:    "",
 		APIStyle:  p.APIStyle,
 		Models:    p.Models,
 		CreatedAt: p.CreatedAt,
