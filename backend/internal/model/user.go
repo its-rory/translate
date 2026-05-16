@@ -21,14 +21,20 @@ func (User) TableName() string {
 type UserCreateRequest struct {
 	Username    string `json:"username" binding:"required,min=3,max=50"`
 	Password    string `json:"password" binding:"required,min=6"`
+	Role        string `json:"role" binding:"omitempty,oneof=ADMIN USER"`
 	DisplayName string `json:"display_name"`
 	Email       string `json:"email"`
 }
 
 type UserUpdateRequest struct {
+	Role        string `json:"role" binding:"omitempty,oneof=ADMIN USER"`
 	DisplayName string `json:"display_name"`
 	Email       string `json:"email"`
 	AvatarURL   string `json:"avatar_url"`
+}
+
+type PasswordUpdateRequest struct {
+	Password string `json:"password" binding:"required,min=6"`
 }
 
 type UserResponse struct {
