@@ -5,15 +5,20 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/its-rory/translate/backend/internal/repository"
 	"github.com/its-rory/translate/backend/internal/service"
 )
 
 type AuthHandler struct {
 	authService *service.AuthService
+	userRepo    *repository.UserRepository
 }
 
 func NewAuthHandler(authService *service.AuthService) *AuthHandler {
-	return &AuthHandler{authService: authService}
+	return &AuthHandler{
+		authService: authService,
+		userRepo:    repository.NewUserRepository(),
+	}
 }
 
 func (h *AuthHandler) Login(c *gin.Context) {
@@ -62,12 +67,20 @@ func (h *AuthHandler) Logout(c *gin.Context) {
 
 func (h *AuthHandler) Me(c *gin.Context) {
 	userID := getUserID(c)
-	username := getUsername(c)
-	role := getRole(c)
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"user_id":  userID,
-		"username": username,
-		"role":     role,
-	})
+	user, err := h.userRepo.GetByID(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if user == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"user": user.ToResponse()})
 }
