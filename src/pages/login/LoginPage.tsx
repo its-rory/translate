@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { useState, type FormEvent } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { AlertCircleIcon, Languages, LockKeyhole, UserCircle2 } from "lucide-react";
 
