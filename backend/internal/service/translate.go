@@ -53,7 +53,7 @@ type StreamTranslateRequest struct {
 }
 
 func (s *TranslateService) Translate(req TranslateRequest) (*TranslateResponse, error) {
-	provider, promptContent, userMessage, err := s.prepareRequest(req.ProviderID, req.ModelName, req.PromptID, req.SourceText, req.TargetLang, req.SourceLang)
+	provider, promptContent, userMessage, err := s.prepareRequest(req.ProviderID, req.PromptID, req.SourceText, req.TargetLang, req.SourceLang)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +73,7 @@ func (s *TranslateService) Translate(req TranslateRequest) (*TranslateResponse, 
 }
 
 func (s *TranslateService) StreamTranslate(req StreamTranslateRequest, writer *bufio.Writer, flusher http.Flusher) error {
-	provider, promptContent, userMessage, err := s.prepareRequest(req.ProviderID, req.ModelName, req.PromptID, req.SourceText, req.TargetLang, req.SourceLang)
+	provider, promptContent, userMessage, err := s.prepareRequest(req.ProviderID, req.PromptID, req.SourceText, req.TargetLang, req.SourceLang)
 	if err != nil {
 		return err
 	}
@@ -86,7 +86,7 @@ func (s *TranslateService) StreamTranslate(req StreamTranslateRequest, writer *b
 	}
 }
 
-func (s *TranslateService) prepareRequest(providerID int64, modelName string, promptID int64, sourceText, targetLang, sourceLang string) (*model.Provider, string, string, error) {
+func (s *TranslateService) prepareRequest(providerID, promptID int64, sourceText, targetLang, sourceLang string) (*model.Provider, string, string, error) {
 	provider, err := s.providerRepo.GetByID(providerID)
 	if err != nil {
 		return nil, "", "", fmt.Errorf("failed to get provider: %w", err)
