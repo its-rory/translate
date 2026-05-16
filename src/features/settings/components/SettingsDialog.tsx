@@ -6,7 +6,7 @@ import {
     DialogDescription,
     DialogClose,
 } from "@/components/ui/dialog";
-import { Settings, Box, BookOpenText, Info, X, Users } from "lucide-react";
+import { Settings, Box, BookOpenText, Info, X, Users, type LucideIcon } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -20,15 +20,22 @@ import AdminProviderPanel from "./panels/AdminProviderPanel";
 import { UsersPanel } from "./panels/UsersPanel";
 import { useAuth } from "@/stores/auth.store";
 
+type PanelKey = "general" | "providers" | "users" | "prompts" | "about";
+
+type SidebarItem = {
+    key: PanelKey;
+    icon: LucideIcon;
+    labelKey: string;
+    adminOnly?: boolean;
+};
+
 const SIDEBAR = [
     { key: "general", icon: Settings, labelKey: "common.settings.sidebar.general" },
     { key: "providers", icon: Box, labelKey: "common.settings.sidebar.providers", adminOnly: true },
     { key: "users", icon: Users, labelKey: "common.settings.sidebar.users", adminOnly: true },
     { key: "prompts", icon: BookOpenText, labelKey: "common.settings.sidebar.prompts" },
     { key: "about", icon: Info, labelKey: "common.settings.sidebar.about" },
-] as const;
-
-type PanelKey = typeof SIDEBAR[number]["key"];
+] satisfies readonly SidebarItem[];
 
 export function SettingsDialog() {
     const [open, setOpen] = useState(false);
@@ -36,7 +43,7 @@ export function SettingsDialog() {
     const { t } = useTranslation();
     const { user } = useAuth();
 
-    const visibleSidebar = SIDEBAR.filter(item => {
+    const visibleSidebar = SIDEBAR.filter((item) => {
         if (item.adminOnly) return user?.role === "ADMIN";
         return true;
     });
@@ -88,7 +95,7 @@ export function SettingsDialog() {
 
                         <div className="flex-1 py-1 px-2 flex flex-col min-h-0 min-w-0 dark:bg-[#212121]">
                             <div className="h-10 hidden sm:flex items-center my-2">
-                                {t(SIDEBAR.find(s => s.key === panel)?.labelKey || "")}
+                                {t(SIDEBAR.find((s) => s.key === panel)?.labelKey || "")}
                             </div>
 
                             <Separator />
