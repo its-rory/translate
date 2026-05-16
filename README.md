@@ -39,18 +39,19 @@
 
 ---
 
-Poixe Translate is an open-source web translation tool powered by AI large language models. All configuration data is stored locally in the browser, and all model requests are sent directly from the browser, ensuring privacy and API key security. It supports custom AI model providers, 4 mainstream API protocols, and 186 languages, along with user-defined translation prompts to meet translation needs ranging from everyday communication to professional domains.
+Poixe Translate is an open-source web translation tool powered by AI large language models. Translation requests are still sent directly from the browser to your configured model provider, while the bundled Go backend handles authentication, admin APIs, encrypted provider key storage, and saved user preferences.
 
 ## Features
 
-- **Browser-local requests**: All model requests are sent directly from the browser, ensuring user privacy and API key security.
+- **Browser-to-provider translation requests**: Translation requests go directly from the browser to your configured provider, helping keep model traffic under your control.
+- **Server-backed authentication**: Includes login, refresh tokens, logout, and protected admin APIs for multi-user or managed deployments.
+- **Encrypted provider credentials at rest**: Provider API keys are encrypted before they are written to the backend database.
 - **Custom model providers supported**: You can define your own model providers by configuring the API Endpoint, API Key, API protocol, and model list, and switch freely between different models.
 - **Supports 4 mainstream AI API protocols**: Easily connect to different AI service providers or compatible platforms with flexible extensibility.
 - **Custom translation prompts supported**: Supports custom prompts, allowing users to tailor translation logic based on professional domains (such as legal, IT, or medical) or specific tones for highly accurate contextual translation.
 - **Supports 186 translation languages**: Covers natural languages, regional language variants, dialects, ancient languages, and some constructed languages.
 - **Supports 15 UI languages**: Suitable for global use and open-source distribution.
 - **Theme switching**: Supports following the system theme as well as manual theme switching.
-- **Easy deployment**: Can be deployed as a static site and also supports multiple methods including Docker, Vercel, Nginx, and BT Panel.
 - **Local persistent storage**: Configuration data is stored via IndexedDB for a better user experience.
 
 ## Tech Stack
@@ -63,16 +64,17 @@ This project is built with a modern web technology stack to ensure high performa
 - shadcn/ui
 - Tailwind CSS 
 - Dexie.js (IndexedDB)
+- Gin
+- SQLite
 
 ## Quick Start <a id="quick-start"></a>
 
-Getting started with this tool requires no complicated registration process. Just complete the basic configuration and you can begin translating:
-
-1. **Configure a model provider**: Click the settings button in the upper-right corner to open the configuration panel, then add a model provider and fill in the Endpoint, API Key, choose the API protocol type, and enter the supported model list.
-2. **Select a model**: On the main interface, choose the AI model you want to use, which is the one configured in the previous step.
-3. **Select a target language**: On the main interface, choose the target language for translation. A total of 186 languages are supported.
-4. **Select a translation prompt**: On the main interface, choose a built-in translation prompt (such as finance or general), or use a custom prompt to constrain translation style.
-5. **Start translating**: Enter the text you want to translate in the input box and click the translate button to get the result.
+1. **Prepare backend secrets**: Copy `.env.example` values into your runtime environment and set `ADMIN_PASSWORD`, `JWT_SECRET`, and `ENCRYPTION_KEY` before starting the backend. Add `CORS_ALLOWED_ORIGINS` when your frontend and backend run on different origins during development.
+2. **Start the application**: Use Docker Compose for the quickest full-stack setup, or run the frontend and backend separately.
+3. **Sign in**: Open the app and sign in with the configured admin account.
+4. **Configure a model provider**: Click the settings button in the upper-right corner to open the configuration panel, then add a model provider and fill in the Endpoint, API Key, choose the API protocol type, and enter the supported model list.
+5. **Select a model and target language**: Choose the AI model you want to use, the language to translate into, and the translation prompt.
+6. **Start translating**: Enter the text you want to translate in the input box and click the translate button to get the result.
 
 > For the illustrated tutorial, see [User Guide (Illustrated)](docs/en/guild.md).
 
@@ -137,11 +139,20 @@ Below are just some of the supported languages:
 
 ## Deployment <a id="deploy"></a>
 
-Poixe Translate is a pure front-end project, so deployment is very flexible. You can choose Docker, Vercel, BT Panel, or manual deployment.
+Poixe Translate is now a small full-stack app: the frontend is served by Nginx and the backend handles `/api` routes, authentication, encrypted provider storage, and persisted preferences.
+
+### Docker Compose
+
+1. Copy `.env.example` into your deployment environment and set secure values for `ADMIN_PASSWORD`, `JWT_SECRET`, and `ENCRYPTION_KEY`.
+2. Start the stack:
+
+```bash
+docker compose up -d --build
+```
+
+The app will be available at `http://localhost:8080`.
 
 ### Docker
-
-**Option 1: Build from Dockerfile**
 
 ```bash
 # Clone the source code
@@ -151,74 +162,42 @@ cd translate
 # Build the image
 docker build -t poixeai/translate:latest .
 
-# Run the container
+# Run the container with required secrets
 docker run -d \
   -p 8080:80 \
   --name poixe-translate \
   --restart=always \
+  -e ADMIN_PASSWORD='replace-me' \
+  -e JWT_SECRET='replace-with-a-long-random-secret' \
+  -e ENCRYPTION_KEY='replace-with-a-long-random-secret' \
   poixeai/translate:latest
-````
-
-Visit `http://localhost:8080`
-
-```bash
-# View logs
-docker logs -f poixe-translate
-
-# Remove the container
-docker rm -f poixe-translate
 ```
 
-**Option 2: Use Docker Compose**
+### Vercel or Static Hosting
 
-```bash
-# Clone the source code
-git clone https://github.com/poixeai/translate.git
-cd translate
-
-# Start
-docker compose up -d
-
-# Stop
-docker compose down
-
-# Rebuild and start
-docker compose up -d --build
-```
-
-**Option 3: Pull from Docker Hub**
-
-```bash
-docker pull terobox/translate:latest
-
-docker run -d \
-  -p 8080:80 \
-  --name poixe-translate \
-  --restart=always \
-  terobox/translate:latest
-```
-
-### Vercel
-
-If you want the easiest way to get online quickly, you can deploy directly to Vercel. Click the button below for one-click deployment with zero configuration.
-
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/poixeai/translate&repository-name=poixe-translate)
-
-### BT Panel
-
-> See [BT Panel Deployment Guide](docs/en/deploy-bt.md).
+The current authenticated build expects backend `/api` routes, so a frontend-only static deployment is no longer sufficient on its own. If you deploy the frontend separately, run the Go backend alongside it and proxy `/api` requests to the backend service.
 
 ### Manual Deployment
 
 ```bash
-# Install dependencies
+# Install frontend dependencies
 npm install
 
-# Build the production version
+# Build frontend assets
 npm run build
+
+# Run backend API
+cd backend
+go run .
 ```
 
-The build output is located in the `dist/` directory. Deploy it to any static file server (such as Nginx, Caddy, Apache, etc.).
+Serve the generated `dist/` directory through any static web server and reverse-proxy `/api` traffic to the Go backend.
+
+## Testing
+
+```bash
+npm run test
+```
 
 ## Contributing
 
