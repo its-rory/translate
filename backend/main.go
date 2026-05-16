@@ -62,6 +62,7 @@ func main() {
 				users.GET("/:id", userHandler.GetByID)
 				users.POST("", userHandler.Create)
 				users.PUT("/:id", userHandler.Update)
+				users.PUT("/:id/password", userHandler.ChangePassword)
 				users.DELETE("/:id", userHandler.Delete)
 			}
 
