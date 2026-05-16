@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/table"
 import { useProvidersApi, type Provider } from "@/hooks/useProvidersApi";
 import { useState } from "react";
-import { getAPIStyleLabel, type APIStyle } from "@/types/providers";
+import { getAPIStyleLabel } from "@/types/providers";
 import ProviderUpsertDialog from "./comps/ProviderUpsertDialog";
 import { normalizeAndDedupeModels } from "@/utils/models";
 import ProviderDeleteDialog from "./comps/ProviderDeleteDialog";
