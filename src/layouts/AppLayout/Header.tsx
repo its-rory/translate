@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import VerticalDivider from "@/components/common/VerticalDivider";
 import { SettingsDialog } from "@/features/settings";
 import { useAuth } from "@/stores/auth.store";
-import { LogOut, Settings, User as UserIcon } from "lucide-react";
+import { LogOut } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
