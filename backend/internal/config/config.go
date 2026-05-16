@@ -8,12 +8,13 @@ import (
 )
 
 type Config struct {
-	AdminUsername string
-	AdminPassword string
-	JWTSecret     string
-	EncryptionKey string
-	DBPath        string
-	Port          string
+	AdminUsername      string
+	AdminPassword      string
+	JWTSecret          string
+	EncryptionKey      string
+	DBPath             string
+	Port               string
+	AllowedCORSOrigins []string
 }
 
 var (
@@ -24,12 +25,13 @@ var (
 func GetConfig() *Config {
 	cfgOnce.Do(func() {
 		cfg = &Config{
-			AdminUsername: getEnv("ADMIN_USERNAME", "admin"),
-			AdminPassword: getEnv("ADMIN_PASSWORD", ""),
-			JWTSecret:     getEnv("JWT_SECRET", ""),
-			EncryptionKey: getEnv("ENCRYPTION_KEY", ""),
-			DBPath:        getEnv("DB_PATH", "./data/translate.db"),
-			Port:          getEnv("PORT", "8080"),
+			AdminUsername:      getEnv("ADMIN_USERNAME", "admin"),
+			AdminPassword:      getEnv("ADMIN_PASSWORD", ""),
+			JWTSecret:          getEnv("JWT_SECRET", ""),
+			EncryptionKey:      getEnv("ENCRYPTION_KEY", ""),
+			DBPath:             getEnv("DB_PATH", "./data/translate.db"),
+			Port:               getEnv("PORT", "8080"),
+			AllowedCORSOrigins: splitCSVEnv("CORS_ALLOWED_ORIGINS", "http://localhost:5170,http://127.0.0.1:5170"),
 		}
 	})
 	return cfg
@@ -48,6 +50,9 @@ func (c *Config) Validate() error {
 	if c.EncryptionKey == "" {
 		return fmt.Errorf("ENCRYPTION_KEY environment variable is required")
 	}
+	if len(c.AllowedCORSOrigins) == 0 {
+		return fmt.Errorf("CORS_ALLOWED_ORIGINS must define at least one allowed origin")
+	}
 	return nil
 }
 
@@ -56,4 +61,17 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+func splitCSVEnv(key, defaultValue string) []string {
+	raw := getEnv(key, defaultValue)
+	parts := strings.Split(raw, ",")
+	origins := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			origins = append(origins, trimmed)
+		}
+	}
+	return origins
 }
