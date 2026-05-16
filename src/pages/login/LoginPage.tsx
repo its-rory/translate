@@ -1,13 +1,20 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { AlertCircleIcon, Languages, LockKeyhole, UserCircle2 } from "lucide-react";
 
+import { AuthReasonNotice } from "@/components/common/AuthNotice";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ui/spinner";
+import { consumeAuthReason } from "@/lib/auth-feedback";
 import { useAuth } from "@/stores/auth.store";
+
+const AUTH_REASON_MESSAGES: Record<string, string> = {
+    auth_required: "Sign in to access the translation workspace and its protected settings.",
+    session_expired: "Your previous session expired or could not be refreshed. Sign in again to continue.",
+};
 
 export default function LoginPage() {
     const navigate = useNavigate();
@@ -18,8 +25,19 @@ export default function LoginPage() {
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
     const [error, setError] = useState<string | null>(null);
+    const [authReason, setAuthReason] = useState<string | null>(null);
 
-    const from = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname || "/";
+    const locationState = location.state as { from?: { pathname?: string }; reason?: string } | null;
+    const from = locationState?.from?.pathname || "/";
+
+    useEffect(() => {
+        setAuthReason(locationState?.reason ?? consumeAuthReason());
+    }, [locationState?.reason]);
+
+    const authReasonMessage = useMemo(() => {
+        if (!authReason) return null;
+        return AUTH_REASON_MESSAGES[authReason] ?? AUTH_REASON_MESSAGES.auth_required;
+    }, [authReason]);
 
     const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
@@ -83,6 +101,8 @@ export default function LoginPage() {
                         </div>
 
                         <form className="space-y-5" onSubmit={handleSubmit}>
+                            {authReasonMessage ? <AuthReasonNotice message={authReasonMessage} /> : null}
+
                             <div className="space-y-2">
                                 <Label htmlFor="username">Username</Label>
                                 <div className="relative">
