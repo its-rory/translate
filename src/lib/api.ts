@@ -1,3 +1,5 @@
+import type { APIStyle } from "@/types/providers";
+
 import { clearAuthTokens, getAccessToken, getRefreshToken, saveAuthTokens } from "@/lib/auth-session";
 
 const BASE_URL = "/api/v1";
@@ -36,7 +38,7 @@ type ProviderPayload = {
     name: string;
     base_url: string;
     api_key: string;
-    api_style: string;
+    api_style: APIStyle;
     models: string;
     created_at: number;
     updated_at: number;
@@ -66,6 +68,10 @@ type RequestOptions = RequestInit & {
     skipAuth?: boolean;
     retryOnAuth?: boolean;
 };
+
+type DeltaHandler = (delta: string) => void;
+type ErrorHandler = (error: string) => void;
+type CompleteHandler = () => void;
 
 let refreshPromise: Promise<boolean> | null = null;
 
@@ -180,11 +186,27 @@ async function request<T>(path: string, init?: RequestOptions): Promise<T> {
 function createSSEStream(path: string, body: unknown): SSEStream {
     const controller = new AbortController();
     const serializedBody = JSON.stringify(body);
-    let deltaHandler: ((delta: string) => void) | null = null;
-    let errorHandler: ((error: string) => void) | null = null;
-    let completeHandler: (() => void) | null = null;
+    let deltaHandler: DeltaHandler | null = null;
+    let errorHandler: ErrorHandler | null = null;
+    let completeHandler: CompleteHandler | null = null;
 
-    (async () => {
+    const stream: SSEStream = {
+        onDelta: (handler) => {
+            deltaHandler = handler;
+            return stream;
+        },
+        onError: (handler) => {
+            errorHandler = handler;
+            return stream;
+        },
+        onComplete: (handler) => {
+            completeHandler = handler;
+            return stream;
+        },
+        abort: () => controller.abort(),
+    };
+
+    void (async () => {
         try {
             const res = await performRequest(path, {
                 method: "POST",
@@ -229,10 +251,15 @@ function createSSEStream(path: string, body: unknown): SSEStream {
                             errorHandler?.(parsed.error);
                             continue;
                         }
+
                         const delta = parsed.delta ?? parsed.content ?? parsed.text ?? "";
-                        if (delta) deltaHandler?.(delta);
+                        if (delta) {
+                            deltaHandler?.(delta);
+                        }
                     } catch {
-                        if (data.trim()) deltaHandler?.(data);
+                        if (data.trim()) {
+                            deltaHandler?.(data);
+                        }
                     }
                 }
             }
@@ -243,26 +270,13 @@ function createSSEStream(path: string, body: unknown): SSEStream {
                 completeHandler?.();
                 return;
             }
+
             errorHandler?.(err instanceof Error ? err.message : String(err));
             completeHandler?.();
         }
     })();
 
-    return {
-        onDelta: (handler) => { deltaHandler = handler; return wrap(controller, { deltaHandler: handler, errorHandler, completeHandler }); },
-        onError: (handler) => { errorHandler = handler; return wrap(controller, { deltaHandler, errorHandler: handler, completeHandler }); },
-        onComplete: (handler) => { completeHandler = handler; return wrap(controller, { deltaHandler, errorHandler, completeHandler: handler }); },
-        abort: () => controller.abort(),
-    };
-}
-
-function wrap(ctrl: AbortController, h: { deltaHandler: ((delta: string) => void) | null; errorHandler: ((error: string) => void) | null; completeHandler: (() => void) | null }): SSEStream {
-    return {
-        onDelta: (handler) => { h.deltaHandler = handler; return wrap(ctrl, { ...h, deltaHandler: handler }); },
-        onError: (handler) => { h.errorHandler = handler; return wrap(ctrl, { ...h, errorHandler: handler }); },
-        onComplete: (handler) => { h.completeHandler = handler; return wrap(ctrl, { ...h, completeHandler: handler }); },
-        abort: () => ctrl.abort(),
-    };
+    return stream;
 }
 
 export const api = {
@@ -301,10 +315,10 @@ export const api = {
         return { providers };
     },
 
-    createProvider: (input: { name: string; base_url: string; api_key: string; api_style: string; models: string }) =>
+    createProvider: (input: { name: string; base_url: string; api_key: string; api_style: APIStyle; models: string }) =>
         request("/providers", { method: "POST", body: JSON.stringify(input) }),
 
-    updateProvider: (id: number, patch: Record<string, unknown>) =>
+    updateProvider: (id: number, patch: Partial<ProviderPayload>) =>
         request(`/providers/${id}`, { method: "PUT", body: JSON.stringify(patch) }),
 
     deleteProvider: (id: number) =>
