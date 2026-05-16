@@ -1,6 +1,7 @@
 import { Navigate, Outlet, useLocation } from "react-router-dom";
 
 import { Spinner } from "@/components/ui/spinner";
+import { peekAuthReason } from "@/lib/auth-feedback";
 import { hasStoredAuthTokens } from "@/lib/auth-session";
 import { useAuth } from "@/stores/auth.store";
 
@@ -30,7 +31,7 @@ export function RequireAuth() {
                 replace
                 state={{
                     from: location,
-                    reason: hasStoredAuthTokens() ? "session_expired" : "auth_required",
+                    reason: peekAuthReason() ?? (hasStoredAuthTokens() ? "session_expired" : "auth_required"),
                 }}
             />
         );
