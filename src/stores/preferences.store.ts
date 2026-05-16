@@ -70,8 +70,8 @@ export const usePreferences = create<PreferenceState>()(
         setSourceLanguage: (code) => { set({ sourceLanguage: code }); scheduleSync(); },
         setTargetLanguage: (code) => { set({ targetLanguage: code }); scheduleSync(); },
         setSelectedPromptId: (id) => { set({ selectedPromptId: id }); scheduleSync(); },
-        setSourceText: (value) => { set({ sourceText: value }); scheduleSync(); },
-        setTranslatedText: (value) => { set({ translatedText: value }); scheduleSync(); },
+        setSourceText: (value) => { set({ sourceText: value }); },
+        setTranslatedText: (value) => { set({ translatedText: value }); },
         setTheme: (theme) => { set({ theme }); scheduleSync(); },
         setLocale: (locale) => { set({ locale }); scheduleSync(); },
 
