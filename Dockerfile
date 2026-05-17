@@ -26,13 +26,12 @@ RUN apk add --no-cache nginx ca-certificates tzdata
 COPY --from=frontend-builder /app/dist /usr/share/nginx/html
 COPY --from=backend-builder /app/translate-server .
 COPY nginx.conf /etc/nginx/http.d/default.conf
-COPY --from=backend-builder /app/data /var/opt/translate
 
 RUN mkdir -p /var/log/nginx /var/opt/translate
 
-EXPOSE 80
+EXPOSE 8081
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:80/health || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://localhost:8081/health || exit 1
 
-CMD ["sh", "-c", "translate-server & nginx -g 'daemon off;'"]
+CMD ["sh", "-c", "./translate-server & nginx -g 'daemon off;'"]

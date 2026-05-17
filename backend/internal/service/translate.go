@@ -31,12 +31,13 @@ func NewTranslateService() *TranslateService {
 }
 
 type TranslateRequest struct {
-	ProviderID int64  `json:"provider_id" binding:"required"`
-	ModelName  string `json:"model_name" binding:"required"`
-	PromptID   int64  `json:"prompt_id"`
-	SourceText string `json:"source_text" binding:"required"`
-	TargetLang string `json:"target_lang" binding:"required"`
-	SourceLang string `json:"source_lang"`
+	ProviderID      int64  `json:"provider_id" binding:"required"`
+	ModelName       string `json:"model_name" binding:"required"`
+	PromptID        int64  `json:"prompt_id"`
+	SourceText      string `json:"source_text" binding:"required"`
+	TargetLang      string `json:"target_lang"`
+	SourceLang      string `json:"source_lang"`
+	TranslationMode string `json:"translation_mode"`
 }
 
 type TranslateResponse struct {
@@ -44,16 +45,17 @@ type TranslateResponse struct {
 }
 
 type StreamTranslateRequest struct {
-	ProviderID int64  `json:"provider_id" binding:"required"`
-	ModelName  string `json:"model_name" binding:"required"`
-	PromptID   int64  `json:"prompt_id"`
-	SourceText string `json:"source_text" binding:"required"`
-	TargetLang string `json:"target_lang" binding:"required"`
-	SourceLang string `json:"source_lang"`
+	ProviderID      int64  `json:"provider_id" binding:"required"`
+	ModelName       string `json:"model_name" binding:"required"`
+	PromptID        int64  `json:"prompt_id"`
+	SourceText      string `json:"source_text" binding:"required"`
+	TargetLang      string `json:"target_lang"`
+	SourceLang      string `json:"source_lang"`
+	TranslationMode string `json:"translation_mode"`
 }
 
 func (s *TranslateService) Translate(req TranslateRequest) (*TranslateResponse, error) {
-	provider, promptContent, userMessage, err := s.prepareRequest(req.ProviderID, req.PromptID, req.SourceText, req.TargetLang, req.SourceLang)
+	provider, promptContent, userMessage, err := s.prepareRequest(req.ProviderID, req.PromptID, req.SourceText, req.TargetLang, req.SourceLang, req.TranslationMode)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +75,7 @@ func (s *TranslateService) Translate(req TranslateRequest) (*TranslateResponse, 
 }
 
 func (s *TranslateService) StreamTranslate(req StreamTranslateRequest, writer *bufio.Writer, flusher http.Flusher) error {
-	provider, promptContent, userMessage, err := s.prepareRequest(req.ProviderID, req.PromptID, req.SourceText, req.TargetLang, req.SourceLang)
+	provider, promptContent, userMessage, err := s.prepareRequest(req.ProviderID, req.PromptID, req.SourceText, req.TargetLang, req.SourceLang, req.TranslationMode)
 	if err != nil {
 		return err
 	}
@@ -86,7 +88,7 @@ func (s *TranslateService) StreamTranslate(req StreamTranslateRequest, writer *b
 	}
 }
 
-func (s *TranslateService) prepareRequest(providerID, promptID int64, sourceText, targetLang, sourceLang string) (*model.Provider, string, string, error) {
+func (s *TranslateService) prepareRequest(providerID, promptID int64, sourceText, targetLang, sourceLang, translationMode string) (*model.Provider, string, string, error) {
 	provider, err := s.providerRepo.GetByID(providerID)
 	if err != nil {
 		return nil, "", "", fmt.Errorf("failed to get provider: %w", err)
@@ -95,7 +97,7 @@ func (s *TranslateService) prepareRequest(providerID, promptID int64, sourceText
 		return nil, "", "", fmt.Errorf("provider not found")
 	}
 
-	promptContent := buildDefaultPrompt(targetLang)
+	promptContent := ""
 	if promptID > 0 {
 		prompt, err := s.promptRepo.GetByID(promptID)
 		if err != nil {
@@ -106,11 +108,29 @@ func (s *TranslateService) prepareRequest(providerID, promptID int64, sourceText
 		}
 	}
 
-	return provider, promptContent, buildUserMessage(sourceText, sourceLang), nil
+	finalPrompt := buildTranslationPrompt(promptContent, sourceLang, targetLang, translationMode)
+
+	return provider, finalPrompt, buildUserMessage(sourceText, sourceLang), nil
 }
 
-func buildDefaultPrompt(targetLang string) string {
-	return "Translate the following text to " + targetLang + ". Output only the translated text."
+func buildTranslationPrompt(promptContent, sourceLang, targetLang, translationMode string) string {
+	if translationMode == "zh_en_auto" {
+		return promptContent + "\n" +
+			"Translate between Chinese and English automatically.\n" +
+			"If the user's input is Chinese, translate it into natural English.\n" +
+			"If the user's input is English, translate it into natural Simplified Chinese.\n" +
+			"Only output the translation result. Do not explain the detected language."
+	}
+
+	if sourceLang == "auto" || sourceLang == "" {
+		return promptContent + "\n" +
+			fmt.Sprintf("Detect the user's input language and translate it into %s.\n", targetLang) +
+			"Only output the translation result."
+	}
+
+	return promptContent + "\n" +
+		fmt.Sprintf("Translate the user's input from %s into %s.\n", sourceLang, targetLang) +
+		"Only output the translation result."
 }
 
 func buildUserMessage(sourceText, sourceLang string) string {

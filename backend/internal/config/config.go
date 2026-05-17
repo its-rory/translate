@@ -26,9 +26,9 @@ func GetConfig() *Config {
 	cfgOnce.Do(func() {
 		cfg = &Config{
 			AdminUsername:      getEnv("ADMIN_USERNAME", "admin"),
-			AdminPassword:      getEnv("ADMIN_PASSWORD", ""),
-			JWTSecret:          getEnv("JWT_SECRET", ""),
-			EncryptionKey:      getEnv("ENCRYPTION_KEY", ""),
+			AdminPassword:      getEnv("ADMIN_PASSWORD", "admin"),
+			JWTSecret:          getEnv("JWT_SECRET", "sk-jwt-8f7d9a2b3c4e5f6g7h8i9j0k1l2m3n4o"),
+			EncryptionKey:      getEnv("ENCRYPTION_KEY", "sk-enc-1a2b3c4d5e6f7g8h9i0j1k2l3m4n5o"),
 			DBPath:             getEnv("DB_PATH", "./data/translate.db"),
 			Port:               getEnv("PORT", "8080"),
 			AllowedCORSOrigins: splitCSVEnv("CORS_ALLOWED_ORIGINS", "http://localhost:5170,http://127.0.0.1:5170"),

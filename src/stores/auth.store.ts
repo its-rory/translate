@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { api } from "@/lib/api";
 import { consumeAuthReason, queueSessionNotice, setAuthReason } from "@/lib/auth-feedback";
 import { clearAuthTokens, hasStoredAuthTokens } from "@/lib/auth-session";
+import { usePreferences } from "@/stores/preferences.store";
 
 export type UserRole = "ADMIN" | "USER";
 
@@ -35,6 +36,14 @@ export const useAuth = create<AuthState>((set) => ({
         try {
             await api.login({ username, password });
             const data = await api.getCurrentUser();
+            
+            try {
+                const prefs = await api.getPreferences();
+                usePreferences.getState().loadFromServer(prefs as any);
+            } catch (e) {
+                console.error("Failed to sync preferences", e);
+            }
+
             consumeAuthReason();
             queueSessionNotice("Signed in successfully. Access tokens refresh automatically, and the refresh session stays valid for up to 7 days unless you sign out.");
             set({ user: data.user, isLoading: false });
@@ -65,6 +74,14 @@ export const useAuth = create<AuthState>((set) => ({
 
         try {
             const data = await api.getCurrentUser();
+            
+            try {
+                const prefs = await api.getPreferences();
+                usePreferences.getState().loadFromServer(prefs as any);
+            } catch (e) {
+                console.error("Failed to sync preferences", e);
+            }
+
             set({ user: data.user, isLoading: false });
         } catch {
             setAuthReason("session_expired");
