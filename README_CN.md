@@ -1,7 +1,4 @@
 <div align="center">
-  <a href="https://github.com/its-rory/translate">
-    <img src="./public/x.svg" alt="logo" width="100" height="100">
-  </a>
   <h1>Poixe Translate (Rory 特别版)</h1>
   <p>支持多端同步与智能互译的轻量化 AI 翻译工具</p>
 
@@ -23,8 +20,6 @@
   </p>
 
   <h4>
-    <a href="https://translate.luoverse.cn">演示网站</a>
-    <span> · </span>
     <a href="#quick-start">快速开始</a>
     <span> · </span>
     <a href="#deploy">部署教程</a>
