@@ -29,7 +29,7 @@
     <a href="#language">Translation Languages</a>
   </h4>
   
-  <img src="./docs/assets/poster-1.png" alt="poster">
+  <img src="./docs/assets/poster.png" alt="poster">
 </div>
 
 ---
