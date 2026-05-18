@@ -38,6 +38,7 @@
 
 ## Key Enhancements
 
+- **Shortcut Optimization**: Use `Enter` to translate and `Ctrl + Enter` (or `Cmd + Enter`) for a new line, aligned with modern messaging apps.
 - **Cloud Preference Sync**: Your selected models, custom prompts, and translation modes are now synced to the server. Log in from any device and your workspace is exactly how you left it.
 - **Smart Auto-Translation**: Improved "ZH/EN Auto" mode. No need to manually select a target language on first use; the backend now intelligently handles language detection and switching.
 - **Enhanced Reliability**: Fixed Docker execution path bugs and refined API validation rules for a smoother "out-of-the-box" experience.
