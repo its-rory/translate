@@ -169,10 +169,23 @@ export function Translator() {
     const handleTextareaKeyDown = (
         e: React.KeyboardEvent<HTMLTextAreaElement>
     ) => {
-        if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        if (e.key === "Enter" && !(e.metaKey || e.ctrlKey)) {
             e.preventDefault();
             flashTranslateButtonPress();
             handleTranslateWithReset();
+            return;
+        }
+
+        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+            const textarea = e.currentTarget;
+            const start = textarea.selectionStart;
+            const end = textarea.selectionEnd;
+            const value = textarea.value;
+            setSourceText(value.substring(0, start) + "\n" + value.substring(end));
+            // Set cursor position after the newline in the next render
+            setTimeout(() => {
+                textarea.selectionStart = textarea.selectionEnd = start + 1;
+            }, 0);
             return;
         }
 

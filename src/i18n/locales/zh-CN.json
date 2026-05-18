@@ -332,6 +332,7 @@
       "footer": {
         "shortcuts": {
           "translate": "翻译",
+          "newline": "换行",
           "clear": "清空"
         }
       },
